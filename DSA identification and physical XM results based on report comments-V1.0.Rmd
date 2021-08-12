@@ -1,0 +1,80 @@
+in---
+title: "DSA identification and physical XM results based on report comments-V1.0"
+output: html_notebook
+---
+```{r}
+#Loading libraries. 
+#The memory.limit function was required on the computer I used to increase the memory size so that large tables could be loaded. It may not be needed in all cases.
+library(tidyverse)
+memory.limit(size=56000)
+```
+
+```{r}
+#Load HistoTrac tables.
+(Patient <- readRDS(file = "Patient.rds"))
+(PatientCase <- readRDS(file = "PatientCase.rds"))
+(RelatedPatient <- readRDS(file = "RelatedPatient.rds"))
+(TestDetail <- readRDS(file = "TestDetail.rds"))
+(Sample <- readRDS(file = "Sample.rds"))
+(Test <- readRDS(file = "Test.rds"))
+(UserTest <- readRDS(file = "UserTest.rds"))
+(TransplantHistory <- readRDS(file = "TransplantHistory.rds"))
+(Xmatch <- readRDS(file = "Xmatch.rds"))
+```
+
+```{r}
+#Filter heart patients (including multi-organ patients). 
+(Heart_Patients <- Patient 
+   %>% filter(categoryCd == "Heart" | categoryCd == "Heart/Lung" | categoryCd == "Kidney/Heart" | categoryCd == "Heart/Liver") 
+   %>% select(PatientId, HospitalID, firstnm, lastnm, DOB, categoryCd: GenderCd, A1Cd:dq2cd, PatientTypeCd, mA1Cd:mDPB12NMDPcd, StatusCd, UnacceptAntigenTxt, mA1EqCd, mDPB12EqCd, UNOSCPRAAmt, UNOSUnacceptAntigenTxt) 
+   %>% filter(PatientTypeCd == "Patient") 
+      )
+
+#Filter heart donors. Most of the time column "firstnm" is the UNOS ID. Sometimes we have the actual donor names, however. In those cases look at the next code chunk where donors are linked to transplanted patients.
+(Heart_Donors <- Patient 
+   %>% filter(PatientTypeCd == "Donor")
+   %>% filter(categoryCd == "Heart" | categoryCd == "Heart/Lung" | categoryCd == "Kidney/Heart" | categoryCd == "Heart/Liver")
+   %>% select(PatientId, HospitalID, firstnm, lastnm, DOB, categoryCd: GenderCd, A1Cd:dq2cd, PatientTypeCd, mA1Cd:mDPB12NMDPcd, StatusCd, UnacceptAntigenTxt, mA1EqCd, mDPB12EqCd, UNOSCPRAAmt, UNOSUnacceptAntigenTxt)
+      )
+```
+
+```{r}
+#Find the donors for transplanted patients
+
+#Filter TransplantHistory table for donors (contains other sensitizing events like pregnancies and transfusions)
+(Transplants <- TransplantHistory %>% filter(EventCd == "Transplant" | EventCd == "TXP DSA" | EventCd == "TXP EXT"))
+
+#Join Heart_Patients to Transplants. The inner_join only keeps patients that have been transplanted (according to HistoTrac records). Column "DonorId" should always be the UNOS ID, if we have it.
+(Transplanted_Heart_Patients_and_donors <- Heart_Patients
+   %>% inner_join(Transplants, by = "PatientId")
+      )
+```
+
+```{r}
+#Find patients that have had a positive DSA result.
+#In our lab, we report DSAs using values in the UserTest table, in the "ClassIDSA" and "ClassIIDSA" columns. Searching on these columns will identify only those DSA results that the lab has reported as DSAs.
+#Join to the Sample, Test, and UserTest tables.
+(Heart_Patients_Results <- Heart_Patients
+   %>% left_join(Sample, by = "PatientId")
+   %>% select(PatientId:SampleID, SampleNbr, SampleDt, SpecimenTypeCd, StatusCd.y)
+   %>% left_join(Test, by = c("SampleID" = "SampleId")) 
+   %>% select(PatientId:TreatmentCd, TestMethodCd, XmatchDt, XmatchResultCd, TestedDt, CellSampleId)
+   %>% left_join(UserTest, by = "TestId")
+   %>% select(PatientId:CellSampleId, ClassIDSA:DSABwMFI, UNOSID)
+      )
+#Filter for DSA reports
+(DSAresults_Heart_Patients <- Heart_Patients_Results %>% filter(!is.na(ClassIDSA) | !is.na(ClassIIDSA)))
+
+#Filter for positive (or indeterminate, or "see comment") DSA results
+(PosDSA_Heart_Patients <- DSAresults_Heart_Patients %>% filter(ClassIDSA != "No" | ClassIIDSA != "No"))
+```
+
+```{r}
+#Find physical XM results
+(Heart_Patients_FCXMresults <- Heart_Patients_Results 
+   %>% filter(TestTypeCd == "DDFLOWXM" | TestTypeCd == "HLADDFLOWXM")
+   %>% left_join(Xmatch, by = "TestId")
+   %>% select(PatientId.x:GenderCd, PatientTypeCd, StatusCd.x, SampleID:TestTypeCd, XmatchDt.x:XmatchResultCd, CellSampleId, XmatchId:CaseId, DonorId:ComponentNm, SampleDt.y:CellCd, RatioTxt, ResultCd, NotesTxt, PosMedianTxt, NegMedianTxt, MethodCd, DilutionCd)
+      )
+#Column "CellCd' is the T or B cell XM, column "RatioTxt" is the ratio, and column "ResultCd" is the negative/positive/wk positive/equivocol result. 
+```
